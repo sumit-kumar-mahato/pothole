@@ -7,9 +7,7 @@ import tempfile
 import numpy as np
 import folium
 import pandas as pd
-import av
-
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
+import time
 
 # =====================================================
 # 🔧 PATH + MODEL SETUP
@@ -21,7 +19,7 @@ FILE_ID = "1J391ph0-jzdI8vMh5WwZKgqZCl6wUenh"
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # =====================================================
-# 📥 MODEL LOADER (CACHED)
+# 📥 MODEL LOADER
 # =====================================================
 @st.cache_resource
 def load_detector():
@@ -37,7 +35,7 @@ def load_detector():
 detector = load_detector()
 
 # =====================================================
-# 📦 UTIL IMPORTS
+# 📦 IMPORT UTILS
 # =====================================================
 from utils.tracker import SimpleTracker
 from utils.report import generate_summary
@@ -52,7 +50,7 @@ from utils.visualization import (
 )
 
 # =====================================================
-# 🎨 UI CONFIG
+# 🎨 UI
 # =====================================================
 st.set_page_config(layout="wide")
 
@@ -69,7 +67,7 @@ BASE_LAT = 23.0225
 BASE_LON = 72.5714
 
 # =====================================================
-# 📂 SECTION 1 — IMAGE / VIDEO UPLOAD
+# 📂 IMAGE / VIDEO UPLOAD
 # =====================================================
 st.header("📂 Upload Image / Video")
 
@@ -79,8 +77,8 @@ uploaded_file = st.file_uploader(
 )
 
 # ---------------- IMAGE ----------------
-def process_image(uploaded_file):
-    file_bytes = uploaded_file.read()
+def process_image(file):
+    file_bytes = file.read()
     frame = cv2.imdecode(np.frombuffer(file_bytes, np.uint8), 1)
 
     frame, detections, stats, fps = detector.detect(frame)
@@ -99,12 +97,12 @@ def process_image(uploaded_file):
 
 
 # ---------------- VIDEO ----------------
-def process_video(uploaded_file):
+def process_video(file):
 
     st.subheader("🎥 Video Processing")
 
     tfile = tempfile.NamedTemporaryFile(delete=False)
-    tfile.write(uploaded_file.read())
+    tfile.write(file.read())
 
     cap = cv2.VideoCapture(tfile.name)
     stframe = st.empty()
@@ -113,8 +111,6 @@ def process_video(uploaded_file):
     unique_detections = []
 
     if st.button("▶️ Start Video Analysis"):
-
-        frame_count = 0
 
         while True:
             ret, frame = cap.read()
@@ -129,7 +125,6 @@ def process_video(uploaded_file):
                     unique_detections.append(d)
 
             stframe.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            frame_count += 1
 
         cap.release()
 
@@ -149,7 +144,7 @@ def process_video(uploaded_file):
             plot_time_series(df)
 
 
-# Run upload handlers
+# Run upload
 if uploaded_file:
     if uploaded_file.type.startswith("image"):
         process_image(uploaded_file)
@@ -157,126 +152,103 @@ if uploaded_file:
         process_video(uploaded_file)
 
 # =====================================================
-# 🎥 SECTION 2 — LIVE DETECTION (WEBRTC)
+# 🎥 LIVE CAMERA (OPEN-CV BASED — FULL WORKING)
 # =====================================================
-# =====================================================
-# 🎥 LIVE DETECTION (FORCED LAPTOP CAMERA)
-# =====================================================
-st.header("🎥 Live Detection (Laptop Camera Only)")
+st.header("🎥 Live Detection (Server Camera)")
 
-class LiveProcessor(VideoProcessorBase):
+start_camera = st.checkbox("Start Live Camera")
 
-    def __init__(self):
-        self.tracker = SimpleTracker()
-        self.unique_detections = []
-        self.map_points = []
-        self.frame_count = 0
+FRAME_WINDOW = st.image([])
+tracker = SimpleTracker()
+unique_detections = []
+map_points = []
 
-    def recv(self, frame):
+if start_camera:
 
-        img = frame.to_ndarray(format="bgr24")
+    cap = cv2.VideoCapture(0)
 
-        img = cv2.resize(img, (640, 480))
+    frame_count = 0
 
-        img, detections, stats, fps = detector.detect(img)
+    while start_camera:
+        ret, frame = cap.read()
 
-        lat = BASE_LAT + self.frame_count * 0.00005
-        lon = BASE_LON + self.frame_count * 0.00005
+        if not ret:
+            st.error("Camera not working")
+            break
+
+        frame = cv2.resize(frame, (640, 480))
+
+        frame, detections, stats, fps = detector.detect(frame)
+
+        lat = BASE_LAT + frame_count * 0.00005
+        lon = BASE_LON + frame_count * 0.00005
 
         for d in detections:
-            if self.tracker.is_new(d["bbox"]):
-                self.unique_detections.append(d)
+            if tracker.is_new(d["bbox"]):
+                unique_detections.append(d)
 
                 if d["label"] == "pothole":
-                    self.map_points.append((lat, lon))
+                    map_points.append((lat, lon))
 
-        self.frame_count += 1
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        FRAME_WINDOW.image(frame)
 
-        # 🔥 FIX COLOR ISSUE
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        frame_count += 1
+        time.sleep(0.03)
 
-        return av.VideoFrame.from_ndarray(img, format="rgb24")
-
-
-# 🔥 FORCE DEFAULT CAMERA (NO DROPDOWN)
-webrtc_ctx = webrtc_streamer(
-    key="pothole-live",
-    video_processor_factory=LiveProcessor,
-
-    media_stream_constraints={
-        "video": {
-            "facingMode": "user",   # 👈 FORCE LAPTOP CAMERA
-            "width": {"ideal": 640},
-            "height": {"ideal": 480}
-        },
-        "audio": False,
-    },
-
-    async_processing=True
-)
+    cap.release()
 
 # =====================================================
-# 📊 SECTION 3 — LIVE ANALYTICS DASHBOARD
+# 📊 LIVE ANALYTICS
 # =====================================================
-if webrtc_ctx.video_processor:
+if len(unique_detections) > 0:
 
-    vp = webrtc_ctx.video_processor
+    st.header("📊 Live Route Analysis")
 
-    if len(vp.unique_detections) > 0:
+    df = pd.DataFrame(unique_detections)
 
-        st.header("📊 Live Route Analysis")
+    summary, total, risk = generate_summary(unique_detections)
 
-        df = pd.DataFrame(vp.unique_detections)
+    st.write(summary)
+    st.success(f"Total Unique Defects: {total}")
 
-        summary, total, risk = generate_summary(vp.unique_detections)
+    show_risk_indicator(risk)
 
-        st.write(summary)
-        st.success(f"Total Unique Defects: {total}")
+    st.subheader("📈 Dashboard")
+    live_dashboard(df)
 
-        show_risk_indicator(risk)
+    st.subheader("📉 Time Series")
+    plot_time_series(df)
 
-        # Dashboard
-        st.subheader("📈 Live Dashboard")
-        live_dashboard(df)
+    st.subheader("📊 Distribution")
+    plot_bar_chart(summary)
+    plot_pie_chart(summary)
 
-        # Time Series
-        st.subheader("📉 Time Series")
-        plot_time_series(df)
+    os.makedirs("outputs", exist_ok=True)
+    df.to_csv("outputs/live_report.csv", index=False)
 
-        # Distribution
-        st.subheader("📊 Distribution")
-        plot_bar_chart(summary)
-        plot_pie_chart(summary)
+    st.download_button(
+        "📥 Download CSV Report",
+        df.to_csv(index=False),
+        "road_report.csv"
+    )
 
-        # Save
-        os.makedirs("outputs", exist_ok=True)
-        df.to_csv("outputs/live_report.csv", index=False)
+    st.subheader("🗺️ Map")
+    m = create_map(map_points)
 
-        st.download_button(
-            "📥 Download CSV Report",
-            df.to_csv(index=False),
-            "road_report.csv"
-        )
+    if m:
+        st.components.v1.html(m._repr_html_(), height=400)
 
-        # Map
-        st.subheader("🗺️ Pothole Map")
-        m = create_map(vp.map_points)
-
-        if m:
-            st.components.v1.html(m._repr_html_(), height=400)
-
-        # Heatmap
-        st.subheader("🔥 Heatmap")
-        plot_heatmap(vp.map_points)
+    st.subheader("🔥 Heatmap")
+    plot_heatmap(map_points)
 
 # =====================================================
-# 📱 MOBILE SUPPORT
+# 📱 MOBILE INFO
 # =====================================================
 st.header("📱 Mobile Support")
 
 st.info("""
-✔ Works on mobile browsers  
+✔ Image & video detection works on mobile  
+❌ Live camera requires local system (not browser)  
 ✔ Use Chrome for best performance  
-✔ Allow camera permissions  
-✔ HTTPS required for deployment  
 """)
