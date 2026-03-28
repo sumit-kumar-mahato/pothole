@@ -1,12 +1,18 @@
 streamlit==1.32.2
 
 numpy==1.26.4
-opencv-python-headless==4.8.1.78
+pandas==2.1.4
 
-pandas==2.0.3
-folium
+opencv-python-headless==4.9.0.80
+
+ultralytics==8.2.0
+torch==2.2.0
+torchvision==0.17.0
+
 gdown
-ultralytics==8.0.196
 
 streamlit-webrtc==0.47.1
 av==10.0.0
+
+matplotlib
+folium
