@@ -1,0 +1,10 @@
+streamlit
+opencv-python-headless
+numpy
+pandas
+matplotlib
+folium
+ultralytics
+gdown
+streamlit-webrtc
+av
