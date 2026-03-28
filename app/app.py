@@ -1,6 +1,10 @@
 import sys
 import os
 import streamlit as st
+
+# ✅ MUST BE FIRST STREAMLIT COMMAND
+st.set_page_config(layout="wide")
+
 import gdown
 import cv2
 import tempfile
@@ -19,20 +23,28 @@ FILE_ID = "1J391ph0-jzdI8vMh5WwZKgqZCl6wUenh"
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # =====================================================
-# 📥 MODEL LOADER
+# 📥 MODEL LOADER (CLEAN)
 # =====================================================
 @st.cache_resource
 def load_detector():
     if not os.path.exists(MODEL_PATH):
-        st.info("Downloading AI Model... ⏳")
         url = f"https://drive.google.com/uc?id={FILE_ID}"
         gdown.download(url, MODEL_PATH, quiet=False)
-        st.success("Model Ready ✅")
 
     from utils.detector import PotholeDetector
     return PotholeDetector(MODEL_PATH)
 
-detector = load_detector()
+# ✅ Load model safely
+if "detector" not in st.session_state:
+    if not os.path.exists(MODEL_PATH):
+        st.info("Downloading AI Model... ⏳")
+
+    with st.spinner("Loading AI Model..."):
+        st.session_state.detector = load_detector()
+
+    st.success("Model Ready ✅")
+
+detector = st.session_state.detector
 
 # =====================================================
 # 📦 IMPORT UTILS
@@ -52,8 +64,6 @@ from utils.visualization import (
 # =====================================================
 # 🎨 UI
 # =====================================================
-st.set_page_config(layout="wide")
-
 st.markdown("""
 <style>
 body {background-color: #0E1117;}
@@ -94,7 +104,6 @@ def process_image(file):
     show_risk_indicator(risk)
     plot_bar_chart(summary)
     plot_pie_chart(summary)
-
 
 # ---------------- VIDEO ----------------
 def process_video(file):
@@ -143,7 +152,6 @@ def process_video(file):
         if not df.empty:
             plot_time_series(df)
 
-
 # Run upload
 if uploaded_file:
     if uploaded_file.type.startswith("image"):
@@ -152,7 +160,7 @@ if uploaded_file:
         process_video(uploaded_file)
 
 # =====================================================
-# 🎥 LIVE CAMERA (OPEN-CV BASED — FULL WORKING)
+# 🎥 LIVE CAMERA
 # =====================================================
 st.header("🎥 Live Detection (Server Camera)")
 
@@ -166,7 +174,6 @@ map_points = []
 if start_camera:
 
     cap = cv2.VideoCapture(0)
-
     frame_count = 0
 
     while start_camera:
@@ -190,8 +197,7 @@ if start_camera:
                 if d["label"] == "pothole":
                     map_points.append((lat, lon))
 
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        FRAME_WINDOW.image(frame)
+        FRAME_WINDOW.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
         frame_count += 1
         time.sleep(0.03)
